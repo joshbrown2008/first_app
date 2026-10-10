@@ -373,3 +373,10 @@ Add it as **Strategy E: micro-scalp** in the backtest and in paper trading only,
 - the full spread and fees modeled.
 
 If it passes the Phase 2 and Phase 3 gates on real quotes, it can go live like any other strategy. The data decides. Strategy E without a stop and with unlimited adds will **not** be built into the live engine.
+
+---
+
+## 13. Margin account setup notes
+- **Alpaca opens every account as a margin account.** Under $2,000 of equity the account has no borrowing power. However, margin accounts usually allow trading with unsettled funds, which would remove the good-faith-violation limit from §0, item 6. **Confirm this with Alpaca support before relying on it.** Spreads still need **options Level 3** approval, which is a separate application. You get two tries; if denied, you can reapply after 60 days.
+- **tastytrade:** choose "margin" when opening the account. Full margin privileges need at least $2,000 of equity. Spreads need options approval, which takes 1–3 business days.
+- **Engine rule:** the margin account is for *features* (spreads, using unsettled funds), **not borrowing.** The risk engine caps gross exposure at 1× equity (cash), and every spread counts its maximum loss against that cap.
