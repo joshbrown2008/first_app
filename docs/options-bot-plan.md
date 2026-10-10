@@ -429,3 +429,70 @@ The long-option signals (A–C) and Strategy E, each with its own budget and kil
 
 ### Expectations
 A *good* result is beating SPY's return with drawdowns under about 25%. Any setup that promises 5–10% a month is taking tail risk that hasn't shown up yet.
+
+---
+
+## 15. Higher-return strategy set (replaces §14 as the default candidate list)
+
+**Ground rule:** every extra % of return below comes from taking a risk that §14 avoided. That can mean more leverage, faster turnover, or more exposure to sudden moves. All dollar figures are **illustrative mechanics on $2,000, not backtest results**. Phase 2 replaces them with measured numbers.
+
+### Structural upgrade: trade XSP instead of SPY for premium selling
+XSP is the Mini-SPX index option, 1/10 the size of SPX.
+- **Cash-settled and European-style:** no early assignment, and no risk of receiving $65k of stock.
+- **Expirations every day**, so 0DTE is available.
+- **Section 1256 tax treatment:** 60% long-term / 40% short-term, whatever the holding period.
+- **Broker check:** Alpaca may not support index options, while tastytrade and Tradier do. Verify API support for XSP before choosing the live broker.
+
+### S1. 0DTE XSP put credit spreads with a regime filter (high turnover)
+- **Entry:**
+  - Every qualifying day, about 10:30–11:00 ET.
+  - Sell a ~10-delta put and buy one $2 lower ($200 width). Credit about $0.20, so about $20 per spread.
+  - Run only if both are true: (a) SPX is above its 20-day moving average, and (b) VIX term structure is in contango (VIX < VIX3M).
+- **Exits:** stop when the spread trades at 3× credit. Otherwise let it expire; it is cash-settled.
+- **Size:** 2 spreads per day; max loss is about $360 (18%) on a crash day.
+- **Mechanics:**
+  - Ideal (21 winning days): **≈ +$800/month (≈ 40%)**.
+  - One stop-out costs about −$80, a gap through the stop up to −$360.
+  - Break-even win rate is about 75–80% with stops.
+- **Honest view:** academic and practitioner evidence on 0DTE premium selling is **mixed, and costs matter a great deal**. This is the highest-upside candidate and also the most likely to fail its gates.
+
+### S2. Trend-filtered leveraged index exposure (deep ITM calls)
+- **Entry:**
+  - When SPX is above its 200-day moving average, hold 1 XSP call at about 80 delta, 3–6 months to expiry. That's about $900–1,200 of premium controlling about $6,600 of index.
+  - Total exposure: about 2.5–3× the account's equity.
+- **Exits:** exit to cash when SPX closes below its 200-day moving average. Roll at 60 days to expiry.
+- **Mechanics:**
+  - An average month (index +0.8%) gives about **+2%/month** after time decay.
+  - A strong month (+3%) gives about **+8%**.
+  - A fast crash before the filter exits can cost **−30 to −50%**.
+- **Why it's credible:** it harvests the equity risk premium with leverage. The trend filter has historically helped avoid long bear markets, though it gets whipsawed in choppy ones.
+
+### S3. Earnings implied-move overpricing (seasonal)
+- **Entry:** 15–30 minutes before the close on the day before earnings, sell a defined-risk iron condor at about 1× the implied move on liquid large caps. Stocks under about $150 or with $1–$2 strike widths, so they fit the account.
+- **Exits:** close at the next morning's open.
+- **Size:** max loss ≤ 5% of equity per event, ≤ 3 events per week.
+- **Mechanics:** implied moves tend to exceed realized moves on average, but the losers are big. The edge per event is small, and the main value is low correlation with S1 and S2.
+
+### S4. Regime overlay (decides which of S1–S3 may run)
+| Regime | Condition | S1 | S2 | S3 |
+|---|---|---|---|---|
+| Calm uptrend | SPX > 200d moving average, VIX < VIX3M | ✅ full | ✅ full | ✅ |
+| Choppy | SPX > 200d moving average, VIX ≥ VIX3M | ❌ | ✅ half | ✅ half |
+| Downtrend | SPX < 200d moving average | ❌ | ❌ (cash) | ✅ half |
+
+The overlay switches strategies off when their known failure conditions appear. It never increases size beyond the base limits.
+
+### Portfolio (growth mode)
+| Sleeve | Risk budget |
+|---|---|
+| S2 | about 50% of equity in premium |
+| S1 | max daily loss ≤ 10% of equity |
+| S3 | ≤ 5% of equity per event |
+
+| Outcome | Rough monthly result |
+|---|---|
+| **Ideal month** (all signals win, index +3%) | **≈ +25–40%** |
+| **Realistic, if the edges hold** | **≈ +1.5–3%/month (about 20–40%/year)**, with **drawdowns of 30–50%** |
+| **If S1 has no edge** | S2 alone, about 15–25%/year with deep drawdowns |
+
+**Gates still apply:** each sleeve must pass Phase 2 (with a cost sensitivity sweep) and Phase 3 on its own before it gets capital. The drawdown breaker moves to **−35%** (human resume required) in growth mode.
