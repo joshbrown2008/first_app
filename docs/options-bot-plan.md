@@ -1013,3 +1013,63 @@ Every call records backend, model, tokens, latency and cost in `agent_runs`, so 
 | 5–10 | Paper trading. Beta-binomial probability engine (cold start). Go/no-go review for MES live |
 
 **Gate to MES live:** ≥ 300 paper trades across setups. Bootstrap expectancy lower bound > 0 after MES-equivalent costs (about $3.50 per round turn per contract). No risk-rule violations.
+
+---
+
+## 25. Technical-analysis layer (chart analysts)
+
+**Principle:** indicators are **computed in code** (exact, free, instant). LLMs **interpret** the computed results. Optionally, a vision model **looks at rendered charts** as a second opinion. Every TA signal earns its place by improving the probability engine's calibrated EV (§19). No pattern is trusted on reputation.
+
+### 1. TA engine (deterministic, `engine/ta/`)
+Libraries: `polars` + `pandas-ta` or `TA-Lib`. It runs on each bar close for every tracked ticker, on **multiple timeframes (1m, 5m, 15m, 1h, daily)**.
+
+| Family | Computed |
+|---|---|
+| Trend | EMA 9/20/50/200 and their slopes. Market structure: higher highs/lows vs lower highs/lows from swing pivots. ADX. Regression slope and R² |
+| Momentum | RSI, MACD histogram, rate of change. Divergences vs price pivots |
+| Volatility | ATR, Bollinger band width (squeeze), realized vs implied vol |
+| Volume | Relative volume (by time of day), VWAP and ±σ bands, anchored VWAP (from open, from news time), volume profile (POC / value area) |
+| Levels | Prior-day H/L/C, overnight H/L, opening range, swing-pivot clusters, round numbers, gaps |
+| Patterns | Range breakouts, flags/pennants, inside/outside bars, double top/bottom (pivot-based), failed breakouts. Each is coded as a rule, with a confidence score |
+| Context | SPY/QQQ trend, sector ETF relative strength, VIX level and term structure (S4 regime) |
+
+**Regime classifier:** trending up / trending down / range / volatile chop. Rules first. A clustering or HMM version comes only if it beats the rules out of sample.
+
+### 2. TechnicalSnapshot (what bots see, not raw candles)
+```json
+{"ticker":"NVDA","ts":"2026-10-12T10:41:00-04:00","regime":"trend_up",
+ "tf":{"5m":{"trend":"up","ema_stack":"9>20>50","adx":31,"rsi":63,"structure":"HH/HL"},
+       "1h":{"trend":"up","rsi":58},"1d":{"trend":"up","above_200d":true}},
+ "vwap":{"price_vs":"+0.6σ","slope":"up"},"rel_volume":2.4,
+ "levels":{"support":[181.20,179.80],"resistance":[183.50,185.00]},
+ "patterns":[{"type":"bull_flag","tf":"5m","conf":0.62,"trigger":182.40,"invalidate":180.90}],
+ "squeeze":false,"atr_5m":0.55}
+```
+This is compact (a few hundred tokens), so it's cheap for local or Claude bots to read. It's also exact, so models don't misread candles.
+
+### 3. Chart-analyst bots (in the §18 swarm)
+- **L1 "technician" researchers:** a distinct role alongside the news, options-flow and skeptic roles. Each reads the TechnicalSnapshot (plus news context if any) and writes a SignalCard. The card includes the **trend call, setup, entry trigger, invalidation price and targets taken from computed levels**. These map directly onto playbook fields (§18).
+- **Optional vision reviewer:**
+  - The engine renders a PNG (`mplfinance`: candles, VWAP, EMAs, levels, volume) for **candidate tickers only**.
+  - A vision-capable model reviews it as a second opinion: Claude Sonnet 5.5, or a local vision model on the 4090.
+  - Its verdict is a **feature and a note to L3, never an override**. It is kept only if the shadow-book test shows lift.
+- **L3 advisor input:** a multi-timeframe summary per candidate ("5m bull flag inside a 1h uptrend; above VWAP; RV 2.4; resistance 183.50"). Conflicting timeframes lower the arm priority.
+
+### 4. Feeds into
+- **Playbook:** levels become triggers and invalidation prices. The TTL is set by the timeframe (5m setup → about 30–60 min).
+- **Fast engine:** SC1–SC4 use the same TA engine values, with one source of truth.
+- **Probability engine:** every TA field is a feature. Feature importance and **ablation** (model with vs without each family) show what actually helps.
+
+### 5. Honesty about TA
+- Evidence is stronger for **trend/time-series momentum, volume/VWAP behavior and opening-range dynamics**. It is weak for many classic chart patterns and candlesticks.
+- Testing hundreds of indicators *will* find some that worked by chance (data snooping). Mitigations:
+  - a holdout period never used for selection;
+  - walk-forward testing;
+  - a cap on the number of features promoted per quarter;
+  - preferring families with an economic rationale.
+- **Optional deep model on the 4090** (1D-CNN / small transformer on bar sequences): experimental. It must beat the gradient-boosting baseline out of sample after costs, or it's dropped.
+
+### Cost
+- The TA engine and snapshots are free (local CPU).
+- Technician researchers run on the local LLM ($0).
+- Vision reviews, if enabled, cost about 1–2k tokens per image on Sonnet 5.5 (≈ $0.003–0.005 each), limited to candidate tickers.
