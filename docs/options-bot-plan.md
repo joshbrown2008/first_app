@@ -8,6 +8,8 @@ Status: **plan only, no code yet.** Prepared 2026-10-10. Broker fees and data pr
 
 Start here, because these numbers drive every other decision.
 
+> **Update (2026-10-10): starting capital is now $1,000, and paying for real-time data is approved.** The constraints below were written for $100. Section 11 covers what changes at $1,000 and answers the question "can we just reverse a losing algorithm?"
+
 1. **$100 buys roughly one options contract.** A contract covers 100 shares, so a $0.60 quote costs $60. Each trade will use 30–90% of the account. That means the risk of losing everything is high whatever the strategy. The plan therefore puts survival ahead of upside.
 2. **At $100, fixed monthly costs matter more than commissions.** Commissions are close to $0 at several brokers. Real-time options data, hosting and LLM calls are not. A $99/month data feed would cost 99% of the capital every month. The first job is to keep fixed costs near $0–5/month.
 3. **The account will be a cash account, which allows only long calls and long puts (Level 2).**
@@ -287,3 +289,39 @@ An independent review (2026-10-10) found four blocking issues. All four are addr
 4. Engine lifecycle and calendar bugs → separate engine process with a lock; all cutoffs relative to the calendar close.
 
 It also raised several should-fix items, all applied: the risk-of-ruin and break-even framing, a higher LLM token estimate and dropping the veto, an external dead-man switch, and order-correctness rules.
+
+---
+
+## 11. Revisions for $1,000 capital and paid data
+
+### What changes
+- **Data:** $99/month for Alpaca's real-time feed is about 10% of $1,000 every month, or about 119% a year. Paying it permanently is still too expensive. Pay for **one month** to run Phase 3 paper trading on real quotes. Then trade live at a broker whose real-time data comes with a funded account (Tradier or tastytrade; confirm first), unless Alpaca's data turns out to be the only good option.
+- **Position size:** risk 5–10% per trade ($50–$100 of premium). That means 1 contract per trade with up to 2–3 positions open. Each loss is no longer a large share of the account, so the drawdown breaker becomes −25% from peak, and the daily loss limit becomes −$60.
+- **Universe:** the cheap-stock universe (b) stays viable. Low-delta index ETF options (a) can now be sized properly.
+- **Still a cash account:** margin needs at least $2,000, so spreads still aren't available. **Getting to $2,000** is the most valuable upgrade, because it unlocks defined-risk credit spreads (see below).
+
+### Can we reverse a losing algorithm?
+Usually not. Each trade's result is split into two parts:
+
+`net P&L = gross edge (did the signal predict direction?) − costs (spread + fees + time decay)`
+
+Reversing the trade flips the **edge**, but you pay the **costs** again on the reversed trade. So:
+- **The original's net is about −costs (the signal is just noise):** most losing bots look like this. Reversing it also loses about −costs. Two losers.
+- **The original loses *more than twice the costs*:** the signal is reliably *wrong*. Reversing it can win. To check this, log **gross P&L before costs** separately in the trade journal. Only consider reversing if that gross loss is statistically significant (bootstrap confidence interval below −costs).
+
+Three more catches:
+1. **Exits aren't symmetric.** A +100% target / −50% stop on a long call does not mirror into a sensible long-put rule. The reversed strategy has to be re-specified and re-tested as a new strategy.
+2. **Overfitting.** Reversing after seeing the results is one more data-snooping step. The reversed version must pass the Phase 2 and Phase 3 gates on **fresh, unseen data** before any money goes into it.
+3. **"Loses more often than it wins" is not the same as "loses money."** Option buyers often win only 30–40% of trades and still come out ahead when the winners are big. Judge strategies by **expectancy (average $ per trade after costs)**, never by win rate.
+
+### Reversing the side (buying → selling)
+This is the "reversal" that has a known reason to work. Option sellers collect time decay and, on average, the **volatility risk premium**: implied volatility tends to price in bigger moves than actually happen.
+
+The trade-off is the opposite payoff shape. Sellers win often and in small amounts, and occasionally take a large loss. It also needs collateral:
+
+| Capital | Selling strategy available |
+|---|---|
+| $1,000 (cash) | **Cash-secured puts / covered calls** on liquid stocks priced under about $10 (collateral up to about $1,000 per contract). One position at a time, so concentration risk is high |
+| $2,000+ (margin, Level 3) | **Defined-risk put credit spreads / iron condors** on SPY/QQQ/IWM, e.g. $1–$2-wide spreads risking $100–$200 each. This is the standard small-account setup for a seller |
+
+**Recommendation:** run **both** in Phase 2 backtests and Phase 3 paper trading: (1) the buying signals, with gross-vs-net logging, and (2) a mechanical selling strategy. Use the selling strategy only once capital reaches $2,000 so it can use defined-risk spreads, or use cash-secured puts at $1,000 if the census finds suitable liquid stocks under $10. Let the gates decide which one goes live.
