@@ -1148,3 +1148,72 @@ Paper accounts *can* be reset and refilled (Alpaca lets you reset a paper accoun
 - Raw bars can be re-downloaded and don't need backups. Postgres records and `models/` must be backed up nightly.
 
 **Keys:** Alpaca keys were pasted in chat on 2026-10-10. **Rotate them before use.** Keys live only in `.env`, loaded via environment variables.
+
+---
+
+## 28. Improving prediction accuracy (prioritized)
+
+**Measure the right thing first.** "Accuracy" (win %) is a misleading target. A model can win more often and still make less money. Optimize and report:
+- **log-loss / Brier score** (probability quality),
+- **calibration** (stated 60% → wins about 60%),
+- **post-cost EV per trade**,
+- **EV per day** (EV × how many trades pass the bar).
+
+### Tier 1: biggest expected gains
+1. **Order-flow and quote features** (largest gain for scalping horizons):
+   - NBBO **bid/ask size imbalance** and quote changes;
+   - **order flow imbalance (OFI)**;
+   - trade-side classification (buyer- vs seller-initiated volume);
+   - spread state; microprice vs mid.
+
+   Short-horizon price moves are better explained by order flow than by bar indicators. Data: SIP quotes and trades come with Alpaca Algo Trader Plus (real-time plus history). For MES, top-of-book or depth data comes from a futures vendor (e.g. Databento MBP-1/MBP-10; verify pricing).
+2. **Cross-asset leaders and market internals:**
+   - ES/NQ futures (often lead SPY by a moment);
+   - VIX and VIX futures term structure;
+   - 10-year yield (ZN) and the dollar (DXY);
+   - sector ETF dispersion and relative strength;
+   - market breadth (advancers/decliners, % above VWAP across the universe, computed from our own bars).
+3. **Abstention, the cheapest accuracy gain.** Trade only when the model is confident: the top decile of predicted EV, plus a narrow uncertainty band. Fewer trades, higher hit rate. Sweep the coverage threshold against EV per day on validation data.
+4. **Volatility-normalized everything.** Express features and barriers in **ATR or realized-vol units** (e.g. "price is 1.3 ATR above VWAP", target = 1.0 ATR) rather than dollars. This keeps the same model valid across calm and volatile regimes and across tickers. Use z-scores against rolling time-of-day baselines.
+
+### Tier 2: solid improvements
+5. **Regime conditioning.** Add regime labels as features (S4 trend/vol regime, an HMM-based state, VIX bucket), and calibrate **per regime**. Models often fail when the regime changes, and per-regime calibration shows when they do.
+6. **Calendar and event features:**
+   - minutes to/from CPI, FOMC and NFP;
+   - monthly options expiration (OPEX) and quarterly expiration weeks;
+   - month-end and quarter-end rebalancing;
+   - index rebalance dates; early closes.
+7. **Options-derived features (once OPRA is on):**
+   - implied vol term structure and skew;
+   - put/call volume ratio;
+   - **dealer gamma exposure (GEX) estimates**, which are popular for intraday pinning versus trend days;
+   - implied move vs realized move.
+8. **Ensembles with uncertainty.** Average GBM and NN models trained on different folds and seeds (deep ensembles). Disagreement between ensemble members is an uncertainty estimate that feeds `p_win_lower` (§19). This usually improves calibration more than any single architecture change.
+9. **Targets that match decisions.** Besides win/loss, predict the **R-multiple distribution** (quantile regression), so EV reflects fat tails. Train a **fill-probability model** for passive limit orders (adverse selection: you're more likely to get filled right before the price moves against you).
+
+### Tier 3: LLM-side improvements
+10. **Self-consistency.** Sample triage and researcher outputs several times with temperature. Agreement becomes confidence, and spread becomes uncertainty (local LLM: free).
+11. **Event-outcome memory.** Store every news event with its realized price reaction, and retrieve similar *post-cutoff* events into the researcher's context ("the last 5 similar guidance cuts moved −3% to −7% by the next day"). This is retrieval over our own forward-collected data, so it avoids pre-cutoff contamination.
+12. **Structured extraction over sentiment.** Have models extract *facts*: guidance change %, EPS surprise %, product/regulatory event type. Don't use a vague "sentiment score". Facts are better features.
+
+### Validation rigor (so improvements are real, not overfit)
+- **Combinatorial purged cross-validation (CPCV)** and **probability of backtest overfitting (PBO)** for every candidate feature set or model.
+- Feature selection happens **inside** each training fold, never on the full dataset.
+- **Deflated Sharpe ratio** that accounts for how many variants were tried.
+- A single untouched holdout, used once per quarter.
+- **Live drift monitoring:**
+  - population stability index (PSI) on key features;
+  - rolling calibration;
+  - automatic size reduction when drift exceeds limits (§19).
+- **Weekly error review.** Look at the top 20 most confident losses and wins. Errors that repeat point to missing features or a broken label.
+
+### Suggested order
+1. Volatility-normalized features and labels, plus abstention. Free, and gives a fast win.
+2. Cross-asset and breadth features (built from data we already have).
+3. Order-flow/quote features (needs the quote history download).
+4. Ensembles with uncertainty.
+5. Regime and calendar features.
+6. Options-derived features (when OPRA is on).
+7. The LLM-side items as the forward data builds up.
+
+Each step is accepted only if it improves purged out-of-sample log-loss **and** post-cost EV.
