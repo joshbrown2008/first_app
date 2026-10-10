@@ -872,3 +872,54 @@ Expect **30–40% of months to be losing months**, even in the good cases.
 | −30% (no edge plus costs) | $7,000 | $4,900 | $3,430 (kill switch would stop it long before this) |
 
 **Stop rule:** if live results put the account at −35% from peak, the system halts (§15). If the probability engine's live calibration fails (§19), the strategy track is retired and does not get re-funded.
+
+---
+
+## 21. Running locally (i9 / 128 GB RAM / RTX 4090) with a minimal-spend ramp
+
+### What the hardware changes
+- **The 4090 (24 GB VRAM) can run open-weight LLMs locally**: 8–32B instruction models, 4-bit quantized, served with vLLM or Ollama. Batched throughput is easily enough for about 3,000 L1 researcher wakes per day.
+  - Move **L1 researchers and news triage to the local model ($0 per token)**. Keep Claude for L2/L3 judgment.
+  - This cuts the LLM bill from about $60–120 to **about $20–60/month** in the lean configuration.
+  - Local-model quality is lower. The §18 leaderboard and shadow books decide whether it's good enough, and any researcher slot can be switched to Haiku 5.5 if local underperforms.
+- **128 GB RAM + polars/Parquet:** months of options quote history can be backtested in memory.
+- **CPU:** LightGBM training and walk-forward runs in minutes. No cloud compute needed.
+- **Storage:** budget 1–2 TB of NVMe for quote history (Parquet, partitioned by date and underlying).
+
+### LLM interface (provider-agnostic)
+`agents/llm.py` defines a single `LLMClient` protocol with backends:
+- `anthropic`: Anthropic SDK; `claude-agent-sdk` for deep-research jobs.
+- `local`: an OpenAI-compatible endpoint served by vLLM or Ollama on `localhost`.
+
+Every call records backend, model, tokens, latency and cost in `agent_runs`, so the leaderboard compares backends on equal terms.
+
+### Software stack
+| Layer | Choice |
+|---|---|
+| OS | **Windows 11 + WSL2 Ubuntu 24.04 with systemd enabled**, or native Linux (dual-boot) for the most reliability |
+| Python | 3.12, managed with `uv`. The repo is new, not this Rails repo |
+| Services | `docker compose` with `restart: unless-stopped`: `engine`, `api` (FastAPI, bound to 127.0.0.1), `watchdog`, `llm` (vLLM container with the NVIDIA container toolkit, or Ollama) |
+| DB | SQLite (WAL mode) for trading state. Parquet files for market history |
+| Remote access | Tailscale to reach the dashboard and `/halt` from your phone. **Never open a port on the router** |
+| Alerts | ntfy or Telegram push for fills, halts, errors and the daily summary |
+
+### Home-machine reliability checklist (a desktop isn't a server)
+- **Windows Update:** set Active Hours to 08:00–17:00 ET and pause updates during live phases. Apply updates on weekends.
+- **Power:** "never sleep" and the high-performance plan. A **UPS (about $150)** rides through short outages and allows a clean shutdown.
+- **Network:** wired Ethernet. Optionally, a phone hotspot as failover.
+- **Clock:** enable NTP sync (chrony in WSL, `w32tm` resync on Windows). The staleness checks depend on it.
+- **External dead-man switch:** a free cloud cron job (e.g. a GitHub Actions schedule) checks a heartbeat every 5 minutes during market hours. If the heartbeat is missing, it **flattens positions through the broker API** and alerts you. This is essential for a home setup.
+- **Secrets:** paper and live API keys live in separate `.env` files that are never committed. Live keys are loaded only when `MODE=live` *and* a confirmation flag is set.
+- **Backups:** nightly copy of the SQLite DB and models to cloud storage or another drive.
+
+### Minimal-spend ramp
+| Phase | Duration | What runs | Spend |
+|---|---|---|---|
+| **A. Build + plumbing** | weeks 1–4 | Engine, risk engine, Alpaca **paper** account on the **free** data plan (fine for testing code, *not* for judging strategies). Local LLM. Backtests on Alpaca historical bars | **≈ $0–20/month** (a little Claude API for L3 tests) |
+| **B. Validation paper** | 6–12 weeks | Same engine on **real-time OPRA ($99)**. All strategies run in paper with shadow books. The probability engine collects labels. Optional historical options-quote data for quote-level backtests (est. $30–80, unverified) | **≈ $120–200/month** |
+| **C. Small real trades ("confidence")** | 2–3 months | Fund **$2,000–3,000** in a margin account (the $2,000 floor is needed for day trading). **1 contract, at most $20–40 risk per trade, at most 3 trades/day.** Only setups that passed the B gates. Live is compared against paper side by side | Data + LLM ≈ $120–160/month. **Capital at risk: treat losses here as tuition** |
+| **D. Scale** | after C passes | Add capital toward $5k–10k (§20). Ramp size 25% → 100% per §20 | Per §20 |
+
+**Gate C → D:** ≥ 100 live trades. Live expectancy ≥ 70% of paper expectancy. Median slippage within the model. No risk-rule violations. Max drawdown within the tested range.
+
+**With local LLMs, the lean monthly hurdle drops to about $130–180.** On $10k that's about 1.5% per month (§20 recalculated).
