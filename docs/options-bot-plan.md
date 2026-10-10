@@ -973,3 +973,43 @@ Every call records backend, model, tokens, latency and cost in `agent_runs`, so 
 - Tradovate, NinjaTrader and IBKR have lower futures commissions (about $0.39–0.62/side vs about $0.75) and are worth it once volume is high.
 - **Futures data:** non-professional CME real-time data through brokers typically costs a few dollars/month (verify), far less than OPRA's $99.
 - The `Broker` interface (§3) gets a `FuturesBroker` adapter. `risk.py` gains contract specs (point value, tick, session times, roll calendar).
+
+---
+
+## 24. Starting point (decision)
+
+**Start with SPY/QQQ intraday scalping signals (SC1–SC4), paper-traded as shares on Alpaca. Then go live on MES micro futures.**
+
+### Why this first
+- **$0 to start.**
+  - Alpaca paper trading, free real-time stock data (IEX feed), free news, and free historical stock bars (SIP, with a 15-min delay) for backtests.
+  - No OPRA subscription ($99) and no futures data needed yet.
+- **Signals are instrument-neutral.** SC1–SC4 trigger on the *underlying's* price and volume. Proving the signal on SPY shares tests the hard part, the edge. Choosing the vehicle (MES vs 0DTE options) comes after.
+- **It builds 90% of the shared platform:** engine, risk engine, order manager, state machines, journal and triple-barrier labels, probability engine, dashboard and watchdog. Every later track reuses it.
+- **MES is the cleanest live vehicle for small accounts:**
+  - 1 contract, a $20 stop on a 4-point move;
+  - no time decay; nearly 24h liquidity;
+  - cheap data;
+  - live with **$500–1,000**.
+
+**Caveat:** IEX-only volume understates the total, so relative-volume features are *consistent but scaled*. Re-check thresholds on full SIP data in the backtest.
+
+### Order of tracks
+| # | Track | Starts when |
+|---|---|---|
+| 1 | **Scalping signals on SPY/QQQ** (paper, shares) → **MES live** | Now |
+| 2 | News-drift on single stocks (shares) using the Alpaca news feed and the local-LLM researchers | After the platform and probability engine are stable (≈ week 6) |
+| 3 | LLM swarm L2/L3 arming the fast engine | After track 2 shows researcher lift |
+| 4 | Options: premium selling (XSP/SPY spreads) | Capital ≥ $5k, OPRA data justified |
+| 5 | Commodities (MCL/MGC), Kalshi experiment | After track 1 is live and profitable |
+
+### First build milestones (new repo)
+| Week | Deliverable |
+|---|---|
+| 1 | Repo skeleton (uv, docker compose, FastAPI control plane, SQLite). Alpaca paper adapter. Market calendar. Risk engine with full unit tests |
+| 2 | Streaming bars (1 s / 1 min) from the IEX feed. Order manager plus the position state machine. Watchdog plus the cloud dead-man switch |
+| 3 | SC1 (opening range breakout) end-to-end in paper. Trade journal with triple-barrier labels. Daily report |
+| 4 | Backtester on SIP historical bars (same strategy code) with cost sensitivity. SC2–SC4 added |
+| 5–10 | Paper trading. Beta-binomial probability engine (cold start). Go/no-go review for MES live |
+
+**Gate to MES live:** ≥ 300 paper trades across setups. Bootstrap expectancy lower bound > 0 after MES-equivalent costs (about $3.50 per round turn per contract). No risk-rule violations.
