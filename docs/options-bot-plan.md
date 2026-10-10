@@ -496,3 +496,66 @@ The overlay switches strategies off when their known failure conditions appear. 
 | **If S1 has no edge** | S2 alone, about 15–25%/year with deep drawdowns |
 
 **Gates still apply:** each sleeve must pass Phase 2 (with a cost sensitivity sweep) and Phase 3 on its own before it gets capital. The drawdown breaker moves to **−35%** (human resume required) in growth mode.
+
+---
+
+## 16. Scalping track
+
+### What has to be true for scalping to work
+1. **Cost per round trip must be small compared with the target.** It must be under about 20–25% of the average win.
+2. **The signal must have a measurable edge** that survives realistic fills, judged by expectancy on quote-level data.
+3. **Day-trading permissions.** That means a margin account with ≥ $2,000 under the new FINRA intraday-margin rules. A cash account can't scalp because of settlement.
+
+Evidence warning: large studies of retail day traders (Taiwan, Brazil) find that only a very small fraction are profitable after costs over time. The bot has to *prove* an edge before it gets capital.
+
+### Instrument choice
+| Instrument | Typical cost per round trip | Example target | Cost / target | Notes |
+|---|---|---|---|---|
+| **MES (Micro E-mini S&P futures)** | 1 tick spread ($1.25) + about $1–2 fees ≈ $2.50–3.50 | 4–8 ticks ($5–10) | about 35–50% at small targets, better at 8+ ticks | **The standard scalping instrument**: nearly 24h, deep liquidity, 60/40 tax, low day margin. Needs a futures-enabled broker (tastytrade, IBKR, Tradier futures). **Not options** |
+| **0DTE SPY options, ATM (~0.50 delta, ~$1–3)** | $0.01 spread ($1) + fees $0.10–0.70 ≈ $1.10–1.70 | $0.15–0.25 ($15–25) | about 6–10% | Workable: the targets are much bigger than the $1 scalp in §12. Fast time decay and gamma risk |
+| **0DTE XSP options** | Often $0.02–0.05 spreads | $0.20–0.30 | about 10–20% | Cash-settled, but less liquid than SPY. Use only if spreads are measured tight |
+| Low-delta OTM options | 1 tick on $0.10–0.30 = 3–10% | — | **Bad** | Avoid for scalping |
+
+**Default:** 0DTE SPY ATM options (stays within "options trading"). Run an **MES futures variant in parallel paper trading** as a benchmark. If MES does better, consider switching instruments.
+
+### Scalping strategies (each is its own pluggable `Strategy`, each gated separately)
+All on 0DTE SPY options (or MES), 1 contract, entries only 09:45–15:30 ET.
+
+| ID | Setup | Entry | Exit |
+|---|---|---|---|
+| **SC1 Opening Range Breakout** | 15-min opening range on SPY | Buy ATM call (put) on a 1-min close above (below) the range with relative volume > 1.5 | +$0.20 target / −$0.10 stop (on option price) / 10-min time stop. At most 2 per day |
+| **SC2 VWAP pullback** | SPY above VWAP with rising 20-EMA (trend day) | Buy call on a pullback that touches VWAP or the 9-EMA and the next 1-min bar closes back up (mirror for puts) | +$0.15 / −$0.10 / 8 min. Disabled if price crosses VWAP 3+ times (chop) |
+| **SC3 Key-level reaction** | Prior-day high/low, overnight high/low, round numbers | Two modes. *Fade*: first touch, rejection wick, and volume falling. *Break*: 1-min close through the level with volume | +$0.15 / −$0.08 / 5 min. At most 1 trade per level per day |
+| **SC4 Momentum burst** | 1-min bar range > 2× the 20-bar average and volume > 3× | Enter in the burst direction on the first 1-min pause that holds | +$0.20 / −$0.10 / 5 min. No entries within 2 min of scheduled releases |
+
+**Example math (SC1):** win +$20, loss −$10, cost about $1.50 per trade.
+- Break-even win rate ≈ **38%**.
+- At a 45% win rate: expectancy ≈ 0.45×20 − 0.55×10 − 1.5 = **+$2.00 per trade**.
+- 8 trades/day × 21 days ≈ **+$340/month (≈ 17% on $2,000)**.
+- At a 35% win rate: ≈ −$1.50/trade ≈ **−$250/month**.
+
+The whole outcome turns on a few percentage points of win rate, and only quote-level testing can measure that.
+
+### Scalping risk rules (risk.py)
+| Rule | Value |
+|---|---|
+| Risk per trade | ≤ 1–2% of equity (a $10–20 stop on 1 contract at $2,000) |
+| Daily loss limit | −3% (−$60) → flat and done for the day |
+| Consecutive losses | 3 in a row → 30-min cooldown. A second time → done for the day |
+| Max trades per day | 10 |
+| Adding to losers | **Never** |
+| Spread filter | Option spread > $0.02 or quote > 1 s old → no entry |
+| News | No entries 2 min either side of scheduled releases (CPI, FOMC, NFP) |
+
+### Engine changes for scalping
+- **Streaming everything:** WebSocket quotes, trades and order updates (paid real-time OPRA required). Build 1-second and 1-minute bars locally.
+- **Client-side brackets:** after each fill, the engine manages target, stop and time stop in a sub-second loop. A stop triggers a marketable limit (the natural price + $0.02 cap), never a plain market order.
+- **Latency and slippage telemetry:** log signal → submit → ack → fill times and fill vs mid. Halt the strategy if median slippage exceeds the modeled value.
+- **Hosting:** a cloud VM in a US-East region close to the broker (about $5–10/month). This beats a home connection for reliability. Python stays fine at these 100 ms timescales.
+
+### Testing scalping (stricter than §7)
+- **Data:** bars aren't enough. You need **historical options quotes, not just bars** (ThetaData or Polygon-class options data; check pricing) for at least 6–12 months of 0DTE SPY.
+- **Backtest fills:** model fills at the far side of the spread plus 1 tick of slippage, and test sensitivity.
+- **Validation:** walk-forward (optimize on one month, test on the next) to prevent overfitting.
+- **Paper:** ≥ 300 trades per strategy, with the bootstrap expectancy check (lower bound > 0).
+- **Live:** 1 contract, comparing live slippage to paper. If live expectancy falls more than 50% below paper, stop.
