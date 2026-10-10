@@ -819,3 +819,56 @@ Fast engine trigger on armed ticker ──► probability engine ──► size 
 
 ### Libraries
 `scikit-learn` (logistic, isotonic calibration), `lightgbm`, `scipy.stats` (Beta posteriors), `mapie` or bootstrap (intervals), `mlflow` or a simple `models/` registry (versioned models; every trade records which model version scored it).
+
+---
+
+## 20. Funding and growth targets
+
+### Monthly operating costs (the hurdle)
+| Item | Lean system | Full swarm |
+|---|---|---|
+| Real-time OPRA data (Alpaca Algo Trader Plus) | $99 | $99 |
+| LLM (§18 lean vs full) | $60–120 | $300–600 |
+| Hosting (US-East VM) | $5–10 | $10–20 |
+| News | $0 (verify) | $0 (verify) |
+| **Total** | **≈ $170–230/month** | **≈ $410–720/month** |
+
+During development, add historical options quote data for backtests (estimated $30–80/month, unverified).
+
+### Hurdle as % of capital (lean system, about $200/month)
+| Capital | Costs per month | Return needed per year just to break even |
+|---|---|---|
+| $2,000 | 10% | about 120% → **not viable** |
+| $5,000 | 4% | about 48% → very hard |
+| $10,000 | 2% | about 24% → hard but plausible |
+| $25,000 | 0.8% | about 10% → reasonable |
+
+The full swarm needs **about $50k+** for its costs to drop to about 1% per month.
+
+### Recommendation
+1. **Development and paper trading (about 3–4 months): fund $0.** Budget about **$600–1,000 total** for data, LLM and backtest data. This is the real first spend.
+2. **Go-live (only if the gates pass): fund $10,000** with the lean system. The **minimum is $5,000**:
+   - $2,000 is the legal floor for margin and day trading.
+   - The extra keeps a 35–50% drawdown from pushing the account below $2,000, which would switch off day trading.
+   - Only fund money you can afford to lose entirely.
+3. **Ramp:** live risk starts at **25% of the planned size**. Size doubles after each block of 100 trades whose realized expectancy is ≥ 70% of the paper/model prediction, up to 100%.
+4. **Scale the system with capital:** add L2/L3 model upgrades and the full swarm only once capital and measured lift justify the cost (§18).
+
+### Growth targets (net of all costs)
+| Tier | Annual | Monthly average | Comment |
+|---|---|---|---|
+| Baseline goal | 10–20% | about 1–1.5% | Beats or matches the index after costs. A real success |
+| Stretch | 30–50% | about 2–3.5% | Elite if *sustained*. Expect drawdowns of 25–40% along the way |
+| Not a target | 10%+ per month | — | Implies hidden tail risk. If paper results show this, suspect a bug or overfitting |
+
+Expect **30–40% of months to be losing months**, even in the good cases.
+
+### What $10,000 becomes (illustrative compounding, no deposits)
+| Net annual return | Year 1 | Year 2 | Year 3 |
+|---|---|---|---|
+| +15% | $11,500 | $13,225 | $15,209 |
+| +30% | $13,000 | $16,900 | $21,970 |
+| +50% | $15,000 | $22,500 | $33,750 |
+| −30% (no edge plus costs) | $7,000 | $4,900 | $3,430 (kill switch would stop it long before this) |
+
+**Stop rule:** if live results put the account at −35% from peak, the system halts (§15). If the probability engine's live calibration fails (§19), the strategy track is retired and does not get re-funded.
