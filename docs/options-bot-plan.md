@@ -1120,3 +1120,31 @@ Paper accounts *can* be reset and refilled (Alpaca lets you reset a paper accoun
 ### Hardware fit
 - Millions of rows × a few hundred features train in minutes to an hour on the 4090.
 - 128 GB RAM holds the feature tables. NVMe stores the bars and labels (about 100–500 GB).
+
+---
+
+## 27. Storage decisions and local layout (supersedes SQLite in §3)
+
+| Data | Store | Why |
+|---|---|---|
+| Historical bars and quotes, features, labels, training sets | **Parquet files**, queried with **DuckDB / polars** | Columnar and compressed. Fast scans for backtests and ML |
+| Orders, positions, state machines, journal, agent_runs, SignalCards, playbook, shadow labels | **Postgres (Docker)** | Many concurrent writers (engine, API, watchdog, researcher workers, labelers). SQLite's single writer won't scale to the swarm |
+| Live intraday bars | In memory, flushed to Parquet at the end of the day | Fastest |
+
+**Local layout (inside WSL's ext4 filesystem, not `/mnt/c`, which is 5–20× slower for heavy I/O):**
+```
+~/trading-bot/
+  plan/                 (this document)
+  research/download_bars.py
+  data/bars_1min/symbol=SPY/2024-01.parquet   (git-ignored)
+  data/news/  data/features/  data/labels/     (git-ignored)
+  models/               (git-ignored, versioned model artifacts)
+  pgdata/               (Postgres data dir bind mount, git-ignored)
+  backups/              (nightly pg_dump + models, copied off-machine)
+  .env                  (API keys, never committed)
+```
+- If C: is small, move the WSL distro to a larger NVMe first: `wsl --manage Ubuntu --move D:\WSL\Ubuntu` (recent WSL versions).
+- Budget 100–500 GB.
+- Raw bars can be re-downloaded and don't need backups. Postgres records and `models/` must be backed up nightly.
+
+**Keys:** Alpaca keys were pasted in chat on 2026-10-10. **Rotate them before use.** Keys live only in `.env`, loaded via environment variables.
