@@ -656,7 +656,15 @@ At $2,000 this is about 1–2% of capital per month. The track must earn that be
 - News-track daily loss limit −4%, separate from the scalping and index tracks. A global limit sits across all tracks.
 
 ### Data sources
-- **Alpaca news API (Benzinga):** real-time WebSocket plus history back to 2015. Launched free with rate limits; **verify current pricing**.
+- **Alpaca news API (Benzinga):** real-time WebSocket (`wss://stream.data.alpaca.markets/v1beta1/news`) plus REST history back to 2015.
+  - **Price: appears to be $0 with any Alpaca account.** It launched free, with rate limits set by the market-data plan: 200/min on Basic, 10,000/min on Algo Trader Plus.
+  - Alpaca's current pricing page lists no news fee, but it doesn't list news as an item either.
+  - Price check 2026-10-10. **Confirm by connecting a free/paper key to the news stream in Phase 0.**
+- **Fallbacks if Alpaca news is gated:**
+  - Massive (formerly Polygon) Benzinga add-on: $99/month, plus a base plan.
+  - Finnhub: free tier at 60 calls/min (REST, adequate for a 100-name universe), or about $50/month paid.
+  - Benzinga direct: quote-only, no published price.
+  - Benzinga Pro ($37/month) has **no API**, so it's not usable.
 - **SEC EDGAR:** free 8-K / filings feed.
 - **Earnings calendar:** a free or low-cost provider.
 - **Options IV / implied move:** from the paid OPRA feed already planned.
