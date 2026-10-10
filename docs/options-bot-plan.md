@@ -933,3 +933,43 @@ Every call records backend, model, tokens, latency and cost in `agent_runs`, so 
 - **Alpaca implemented the PDT replacement on 2026-06-04.** For non-leverage margin accounts the PDT designation is abolished, and orders that would create a margin deficit are rejected. So a **$500–1,000 Alpaca account can day trade and scalp long options** with buying power equal to equity. This supersedes the earlier "a cash account can't scalp" and "$2,000 needed to day trade" statements (§0, §16, §21) **for Alpaca specifically**. Other brokers have until 2027-10-20 to implement, so check each one.
 - **Where $2,000 may still matter:** Level 3 (spreads) approval criteria aren't published and may consider equity. Apply and see. The §20 cost-hurdle math, not regulation, is what argues for $5k–10k before scaling.
 - **Note for the order manager:** Alpaca removed the `pattern_day_trader`, `daytrade_count` and `daytrading_buying_power` API fields. Use `buying_power`.
+
+---
+
+## 23. Other instruments: where each fits
+
+**No instrument "yields more" by itself.** Return = edge × size × turnover − costs. What differs is the **cost per unit of edge**, the **available leverage** (which amplifies wins and losses alike), and how well the instrument **matches each strategy track**.
+
+### Comparison (fees approximate; verify per broker)
+| Instrument | Costs | Capital / leverage | Hours | Fit with our tracks |
+|---|---|---|---|---|
+| **Equity/ETF options** (current) | $0–0.70/contract + spread. Time decay and IV crush for buyers | Premium only (defined risk for buyers) | 9:30–16:00 ET | **Best for premium selling** (S1, S3, credit spreads), the only way to harvest the volatility risk premium |
+| **Micro index futures** (MES = $5/S&P pt, MNQ = $2/Nasdaq pt) | About $0.39–0.75/side commission, about $1.50–2.30 round-turn all-in, plus a 1-tick spread ($1.25 on MES) | Day margin as low as about $50 at some brokers, about $2.9k overnight. **Very high leverage**: 1 MES ≈ $33k of S&P exposure | Nearly 23h, Sun–Fri | **Best for the scalping track.** Costs are about equal to ATM 0DTE options for the same S&P move, but there's **no time decay, no strike/IV selection, deeper liquidity**, it can rest passive limit orders, and gets 60/40 tax treatment |
+| **Micro commodity futures** (MCL crude = $1/tick, MGC gold = $1/tick) | Similar to MES | Similar | Nearly 23h | **News/event track:** EIA inventory (Wednesdays), OPEC and geopolitics are LLM-readable catalysts. Noisier, with overnight gap risk |
+| **Stocks / ETFs** | $0 commission, penny spreads, fractional shares (Alpaca) | 1×, up to 4× intraday at ≥ $2k (not used) | Plus extended hours | **Often better than options for the news-drift track** (§17). No time decay or IV crush, the full move counts, and costs are tiny. Use options only when the predicted move is much larger than the implied move |
+| **Crypto (spot)** | Taker fees typically ≈ 0.1%+ per side at retail, too high for scalping | 1× spot (US perps limited) | 24/7 | Low priority. Needs an always-on bot, has weaker news structure, and higher fees |
+| **Spot FX** | Spread-based (about 1 pip majors) | Up to 50:1 in the US | 24/5 | Low priority. Very efficient market, hard edge for retail |
+| **Event contracts (Kalshi)** | Taker fee ≈ ⌈0.07 × contracts × P × (1−P)⌉ (verify) | Fully paid, max loss = price | Market-specific | **Experimental fit for the LLM swarm.** Its core skill is *forecasting* questions (CPI, Fed, jobs prints). Smaller liquidity, and the fee is highest near 50¢ |
+
+### Recommendation: re-map tracks to their best instrument
+| Track | Primary instrument | Why |
+|---|---|---|
+| Scalping (§16, §18 fast engine) | **MES/MNQ micro futures** (options variant kept as a paper benchmark) | No decay, simplest execution, deepest liquidity, nearly 24h |
+| News-driven single stocks (§17) | **Shares** by default. Options only when edge = predicted − implied move is large | No IV crush, near-zero cost |
+| Premium selling / regime (§14, §15) | **Options (XSP/SPY/IWM)** | The only way to harvest the volatility risk premium |
+| Commodities news | **MCL/MGC micros** (phase 2, after MES is proven) | Scheduled, readable catalysts |
+| LLM forecasting experiment | **Kalshi** economic contracts (paper first) | Tests the swarm's forecasting directly, separate from execution skill |
+
+### Futures-specific risk rules (leverage is the danger)
+- **Size by stop distance, never by margin.** Example: with $1,000 equity and 2% risk, the stop budget is $20, so 1 MES with a 4-point stop. Margin may *allow* 20 contracts. The risk engine allows **1**.
+- **No overnight futures positions** in the scalping track: flat by 15:55 ET (or the session-specific cutoff).
+- **Max contracts = floor(equity × risk% / (stop pts × $/pt)).** Hard cap of 2 MES until equity is above $5k.
+- **Avoid contract roll weeks** (quarterly). Trade the front month after roll date.
+- **No trading 2 minutes either side of CPI/FOMC/NFP**, unless a dedicated event strategy has passed its gates.
+
+### Broker impact
+- **Alpaca doesn't cover futures.** Keep Alpaca for paper trading, stocks/options data and news.
+- **tastytrade** covers options and futures (and has an API and sandbox), so it could be the **single live broker**.
+- Tradovate, NinjaTrader and IBKR have lower futures commissions (about $0.39–0.62/side vs about $0.75) and are worth it once volume is high.
+- **Futures data:** non-professional CME real-time data through brokers typically costs a few dollars/month (verify), far less than OPRA's $99.
+- The `Broker` interface (§3) gets a `FuturesBroker` adapter. `risk.py` gains contract specs (point value, tick, session times, roll calendar).
