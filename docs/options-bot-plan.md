@@ -2,6 +2,8 @@
 
 Status: **plan only, no code yet.** Prepared 2026-10-10. Broker fees and data prices below were checked on that date but change often. Check each one again before you open an account.
 
+> **START HERE → §29 is the current, consolidated build plan.** §0–§28 are the design log, written in the order decisions were made. Where they conflict, **the later section wins**. §29 lists every superseded decision.
+
 ---
 
 ## 0. The facts this plan is built around
@@ -1217,3 +1219,79 @@ Paper accounts *can* be reset and refilled (Alpaca lets you reset a paper accoun
 7. The LLM-side items as the forward data builds up.
 
 Each step is accepted only if it improves purged out-of-sample log-loss **and** post-cost EV.
+
+---
+
+## 29. Consolidated implementation plan (current: build from this)
+
+### 29.1 Current decisions (superseded items → their replacements)
+| Topic | Current decision | Replaces |
+|---|---|---|
+| First track | SPY/QQQ scalping signals (SC1–SC4), paper-traded as shares on Alpaca → live on **MES micro futures** (§24) | Options-first (§2, §14) |
+| Instruments per track | Scalping → MES/MNQ. News drift → shares (options only when edge ≫ implied). Premium selling → XSP/SPY options. Commodities/Kalshi later (§23) | Options for everything |
+| Broker | **Alpaca Trading API** (paper, stocks data, news). A futures broker with API and sim for MES (tastytrade, or a lower-cost futures broker) (§23) | Tradier/tastytrade options-first (§1) |
+| Account minimums | No options minimum. Alpaca non-leverage accounts can day trade (PDT retired 2026-06-04). $2,000 matters only for leverage and possibly Level 3 (§22) | "$2,000 needed", cash-account limits (§0, §11, §16) |
+| Hosting | **Local PC** (i9, 128 GB, RTX 4090), WSL2 + Docker, UPS, cloud dead-man switch (§21) | VPS / free-tier VM (§6) |
+| LLMs | Local LLM on the 4090 for L1 researchers and triage. Claude for L2/L3. Arm/disarm only. Reviewer is veto/reduce-only and measured by shadow books (§17, §18) | "No LLM in trade path" (§10) |
+| Storage | **Parquet + DuckDB/polars** for market data. **Postgres** for trading state (§27) | SQLite (§3) |
+| Prediction | Meta-labeling probability engine → **GBM baseline → NN on 4090**, trained on replay + shadow labels, gated by EV_lower > 0 and ¼ Kelly under hard caps (§19, §26) | Win-rate heuristics |
+| Accuracy program | §28 items, implemented in the order below. Each is accepted only if it improves purged out-of-sample log-loss **and** post-cost EV | — |
+| Funding | $0 during build/paper. Then $500–1,000 confidence phase. Scale toward $5–10k after gates (§20–§22) | $100 / $1,000 / $2,000 variants |
+
+### 29.2 Repository layout (new repo, e.g. `trading-bot`)
+```
+app/                 FastAPI control plane (status, halt, flatten, dashboards)
+engine/              __main__ (single-instance lock), scheduler, data streams,
+                     orders, positions (state machines), risk.py
+engine/ta/           TA engine + TechnicalSnapshot (§25)
+features/            normalize.py (ATR/vol units, time-of-day z-scores)
+                     cross_asset.py, breadth.py, regime.py, calendar.py,
+                     orderflow.py (NBBO imbalance, OFI, trade-side), options.py (later)
+strategies/          sc1_orb.py, sc2_vwap.py, sc3_levels.py, sc4_burst.py, (news, swarm later)
+prob/                beta_binomial.py, gbm.py, nn.py, ensemble.py, calibrate.py,
+                     sizing.py (EV_lower gate, ¼ Kelly), abstain.py
+research/            download_bars.py, download_quotes.py, download_crossasset.py,
+                     replay.py (same strategy code as live), label.py (triple-barrier,
+                     ATR barriers, conservative fills), dataset.py (uniqueness weights),
+                     cv.py (purged walk-forward, CPCV, PBO, deflated Sharpe),
+                     train_*.py, reports/
+monitoring/          drift.py (PSI), calibration.py, error_review.py, slippage.py
+brokers/             base.py, alpaca.py, futures_<broker>.py, paper_sim.py
+agents/              llm.py (anthropic | local backends), researchers, evaluators (later)
+tests/               risk, state machines, labels (no look-ahead), cv purging
+docker-compose.yml   postgres, engine, api, watchdog, llm
+```
+
+### 29.3 Milestones (each ends with an acceptance check)
+| Week | Build | Accuracy items (§28) built in | Acceptance |
+|---|---|---|---|
+| 1 | Repo skeleton (uv, compose, Postgres). Alpaca paper adapter. Market calendar. **Risk engine + tests**. `LLMClient` (anthropic + local) | — | Tests green. `/halt` works. Paper order round-trip |
+| 2 | Streaming bars (1 s / 1 min). Order manager + position state machine. Watchdog + cloud dead-man switch. TA engine v1 | **#4 Volatility-normalized features** from day one (ATR units, time-of-day z-scores) | Full simulated session with no errors. Kill switch drill passes |
+| 3 | SC1 end-to-end in paper. Journal. **Triple-barrier labels with ATR-based barriers**. Daily report | #4 (labels) | Every candidate (taken or not) gets labeled. No look-ahead (test) |
+| 4 | **Subscribe to Alpaca Algo Trader Plus ($99)**. Download quote/trade history and cross-asset symbols (sector ETFs, volatility ETF proxies, rates/dollar ETF proxies; true VIX/futures intraday from a vendor later). Replay engine + labeler (conservative fills). Backtester with cost sweep. SC2–SC4 | Data for #1, #2 | Replay and live produce **identical** features on the same day (parity test) |
+| 5 | Probability engine v1 (Beta-binomial) + **abstention threshold**. Shadow mode on the full universe | **#3 Abstention** | EV per day vs coverage curve on validation data. Threshold chosen there |
+| 6 | Breadth (% above VWAP, advance/decline from own bars), cross-asset and sector features. Regime labels (S4 + HMM). Calendar/event features | **#2, #5, #6** | Each family passes the ablation (log-loss **and** EV improve, CPCV) |
+| 7–8 | Dataset builder (uniqueness weights). **CPCV + PBO + deflated Sharpe harness**. LightGBM baseline. Drift monitoring (PSI, rolling calibration). Weekly error-review report | Validation rigor | PBO < 0.3 for the chosen config. Calibration within tolerance |
+| 9–10 | **Order-flow features** (NBBO imbalance, OFI, trade-side, microprice). **Ensembles** (GBM + NN, seeds/folds) with disagreement → `p_win_lower`. **Quantile/R-multiple heads**. Passive **fill-probability model** | **#1, #8, #9** | NN replaces GBM only if it wins on purged log-loss, Brier and post-cost EV across folds |
+| 11–12 | MES path: futures data vendor (verify pricing), futures broker sim adapter, MES contract specs in `risk.py`. Run the same signals with MES costs | — | **MES go/no-go:** ≥ 300 paper trades, bootstrap EV lower bound > 0 after about $3.50 round-turn, no risk violations |
+| 13+ | **Live confidence phase** ($500–1,000, 1 contract, ≤ $20–40 risk, ≤ 3 trades/day) **while** the news track (§17) starts on the local LLM, with **#12 fact extraction**, **#10 self-consistency** and **#11 post-cutoff event memory** (forward-only) | #10–#12 | Live expectancy ≥ 70% of paper. Slippage within the model |
+| Later | Swarm L2/L3 arming (§18). Options-derived features **#7** when OPRA is justified. Premium-selling track (§15). Commodities / Kalshi (§23) | #7 | Each layer beats the previous one in shadow books, net of cost |
+
+### 29.4 Standing rules (apply to every milestone)
+- **One codebase for replay and live.** A feature that can't be computed identically in both doesn't ship.
+- **Feature acceptance:**
+  - ablation under CPCV;
+  - feature selection inside folds only;
+  - promoted only if purged OOS log-loss **and** post-cost EV improve;
+  - at most a few promoted feature families per quarter;
+  - the holdout is used once per quarter.
+- **Model versions** are tagged on every decision. Automatic size cut on calibration/PSI drift. A setup is paused after 4 weeks of realized EV below prediction.
+- **Weekly error review:** the 20 most confident losses and wins, with a missing-feature / broken-label log.
+- **Risk engine and caps always override** the model and the LLMs. LLMs never place orders.
+
+### 29.5 Spend timeline
+| Period | Monthly |
+|---|---|
+| Weeks 1–3 | ≈ $0–20 (Claude API tests) |
+| Weeks 4–12 | ≈ $100–150 (Alpaca data $99 + Claude). One-time futures data purchase TBD |
+| Live confidence phase | ≈ $130–180 + futures data (a few $/month, verify) + capital at risk $500–1,000 |
