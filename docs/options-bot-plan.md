@@ -559,3 +559,104 @@ The whole outcome turns on a few percentage points of win rate, and only quote-l
 - **Validation:** walk-forward (optimize on one month, test on the next) to prevent overfitting.
 - **Paper:** ≥ 300 trades per strategy, with the bootstrap expectancy check (lower bound > 0).
 - **Live:** 1 contract, comparing live slippage to paper. If live expectancy falls more than 50% below paper, stop.
+
+---
+
+## 17. News-driven single-stock track with an LLM proposal reviewer
+
+This **supersedes §10's "no LLM in the trade path"** decision, at the user's request, under three conditions:
+1. The reviewer can only **reject or reduce** a trade.
+2. Its value is **measured against counterfactuals**.
+3. It is validated **forward-only** (see Testing below).
+
+### Core idea: trade the gap between *predicted* and *implied* move
+High-volatility stocks have expensive options, because the market already prices a big move. Buying them pays off only if the realized move **exceeds the implied move**. Every proposal must state:
+
+`edge = predicted |move| − implied |move|` (from the ATM straddle, for the trade's horizon)
+
+| Edge | Structure |
+|---|---|
+| Strongly positive, with direction | **Debit spread** in the predicted direction. This is cheaper than a single long option when IV is high, and its risk is defined |
+| Strongly positive, no direction | Long straddle or strangle (rare; costly) |
+| Strongly negative (overpriced) | Defined-risk **iron condor / credit spread** (S3-style) |
+| Near zero | **No trade** |
+
+### Universe (rebuilt daily)
+- Stocks priced $10–$200 with average daily option volume > 5,000 contracts.
+- ATM option spread ≤ 5% of mid, and open interest > 500 at the chosen strikes.
+- **IV rank > 50 or IV/HV > 1.3** (the "high-volatility" screen).
+- Exclusions: stocks under $5, recent IPOs (< 90 days), pending M&A deals, names with hard-to-borrow or halt-prone history (some small biotechs).
+- Target about 50–150 names.
+
+### Where an edge can plausibly exist (and where it can't)
+- ❌ **Racing the headline.** Algorithms react within milliseconds, and an LLM pipeline takes seconds. **Never enter in the first ~5 minutes after a headline.**
+- ✅ **Slow diffusion.** Post-earnings announcement drift, guidance/analyst revision drift, and news on less-covered mid caps. Academic work (e.g. LLM headline sentiment predicting next-day returns) found effects concentrated in **smaller stocks**, and they **shrink as the approach spreads**.
+- ✅ **Interpreting complex text.** 8-K filings, guidance nuance, FDA/regulatory language, where a reader adds value over keyword sentiment.
+- ✅ **Overreaction fades.** A large move on news the model scores as low-materiality.
+
+### Pipeline
+```
+ News (Alpaca/Benzinga WS, ~600–900/day) + SEC EDGAR 8-K feed + earnings calendar
+        │ dedupe, map to tickers, drop non-universe
+        ▼
+ [1] Triage — claude-haiku-5-5, structured output (strict JSON schema)
+     {material: bool, event_type, direction: -1..1, surprise: 0..1, horizon, confidence}
+        │ material only (~20–60/day)
+        ▼
+ [2] Predictor — deterministic quant model (gradient boosting / logistic)
+     features: triage scores, pre-news move, relative volume, gap vs implied move,
+               IV rank, sector/SPY move, time of day, days to earnings
+     → forecast distribution of move over horizon h; compute edge vs implied move
+        │ |edge| > threshold
+        ▼
+ [3] Proposal builder — deterministic: picks the structure from the table above,
+     strikes, size (≤ 2–3% equity max loss), entry limit, exits
+        ▼
+ [4] Reviewer ("the advisor") — claude-opus-5-5, effort medium, structured output
+     input: proposal, raw news text, predictor features, recent price/IV, open book, risk state
+     output: {verdict: APPROVE|REDUCE|REJECT, size_multiplier ≤ 1.0, reasons[], red_flags[]}
+     role: adversarial — "find why this trade is wrong" (stale news, already priced in,
+           ambiguous ticker mapping, binary event inside horizon, liquidity, correlation)
+        ▼
+ [5] Risk engine — deterministic final gate (unchanged; can still reject anything)
+        ▼
+ Order manager → broker
+```
+
+**Why a separate review call instead of the API's built-in advisor tool:** the Claude API has an advisor tool (a cheaper executor model consults Claude Opus 5.5 mid-generation). With current advisor models, though, the advice comes back **encrypted**: it can be passed back to the model but not read or logged. Trade decisions need an **auditable, readable reason**. So the reviewer is its own call with a strict output schema, and every verdict is stored. The advisor tool can optionally be used *inside* the proposal step, but never as the decision record.
+
+**Failure handling:** if the reviewer errors, times out (> 20 s) or refuses, the default is **REJECT**. The reviewer can never raise size or create a trade.
+
+### Measuring whether the reviewer helps ("advisor lift")
+- Every proposal is recorded. **Rejected proposals are paper-traded as a shadow book.**
+- Compare expectancy of approved trades against all proposals, and against rejected ones.
+- If the reviewer doesn't improve expectancy, net of its cost, over ≥ 100 proposals, switch it off and keep the predictor alone. Apply the same test to the Haiku triage against a plain keyword/sentiment baseline.
+
+### Testing (stricter: LLM look-ahead bias)
+- An LLM has read how historical events turned out. **Backtests of LLM-scored historical news are contaminated.**
+- Mitigations:
+  - (a) Train the predictor's non-LLM features on history.
+  - (b) For LLM features, use only news **after the model's training cutoff**, or mask entity names and dates. Masking only partly helps.
+  - (c) Rely mainly on **forward paper trading**: ≥ 3 months and ≥ 150 proposals, with the bootstrap expectancy check.
+
+### Cost (estimated, verify with measured usage)
+| Component | Volume | Cost |
+|---|---|---|
+| Haiku 5.5 triage | about 900 headlines/day × ~1.5k tokens ≈ 1.4M input tokens/day | ≈ **$0.15/day** |
+| Opus 5.5 reviewer | about 5–20 proposals/day × ~15k input + 1.5k output | ≈ **$0.10 each → $0.50–2/day** |
+| **Total** | | ≈ **$15–45/month**, under a monthly cap (e.g. $40) and a per-day cap |
+
+At $2,000 this is about 1–2% of capital per month. The track must earn that before it adds anything.
+
+### Risk rules specific to this track
+- Max loss per trade ≤ 2–3% of equity. Defined-risk structures only (debit/credit spreads).
+- ≤ 3 concurrent single-stock positions, ≤ 1 per sector.
+- No holding through a scheduled binary event (earnings, FDA date) unless the trade *is* that event and is sized for total loss.
+- Halt-prone names are excluded. If a holding is halted, alert and close when it reopens.
+- News-track daily loss limit −4%, separate from the scalping and index tracks. A global limit sits across all tracks.
+
+### Data sources
+- **Alpaca news API (Benzinga):** real-time WebSocket plus history back to 2015. Launched free with rate limits; **verify current pricing**.
+- **SEC EDGAR:** free 8-K / filings feed.
+- **Earnings calendar:** a free or low-cost provider.
+- **Options IV / implied move:** from the paid OPRA feed already planned.
