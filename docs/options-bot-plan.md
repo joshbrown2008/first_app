@@ -380,3 +380,52 @@ If it passes the Phase 2 and Phase 3 gates on real quotes, it can go live like a
 - **Alpaca opens every account as a margin account.** Under $2,000 of equity the account has no borrowing power. However, margin accounts usually allow trading with unsettled funds, which would remove the good-faith-violation limit from §0, item 6. **Confirm this with Alpaca support before relying on it.** Spreads still need **options Level 3** approval, which is a separate application. You get two tries; if denied, you can reapply after 60 days.
 - **tastytrade:** choose "margin" when opening the account. Full margin privileges need at least $2,000 of equity. Spreads need options approval, which takes 1–3 business days.
 - **Engine rule:** the margin account is for *features* (spreads, using unsettled funds), **not borrowing.** The risk engine caps gross exposure at 1× equity (cash), and every spread counts its maximum loss against that cap.
+
+---
+
+## 14. Recommended setup ("the one plan")
+
+"Maximize gains" here means **maximizing long-run account growth while staying in the game**. Sizing for the biggest possible upside maximizes the chance of losing everything.
+
+### Accounts
+| Step | Action |
+|---|---|
+| Now | Open **Alpaca** (paper + live) for development. **Apply for options Level 3 now**, because approval can take a while and a denial means waiting 60 days to reapply |
+| Now | Open the live broker: **Tradier** if a funded account gets real-time options quotes through the API, otherwise **tastytrade**. Choose a margin account and apply for spreads approval |
+| Paper (weeks 4–9) | Pay for **one month** of Alpaca OPRA ($99) *or* use the live broker's data with `paper_sim` |
+| Go-live | Fund **$2,000** (the margin threshold, which unlocks defined-risk spreads). Fund only *after* the paper gates pass |
+
+**Why not Alpaca live:** at about 6 spreads a month, Alpaca costs about $0.20 in fees plus **$99 of data, about $100/month (5% of $2,000 every month)**. tastytrade costs about $2.40 per spread round trip, about $15/month, with data included (verify). Tradier Standard costs about $1.40 per spread.
+
+### Core strategy (about 80–90% of the risk budget): mechanical put credit spreads
+- **Underlyings:** SPY, QQQ, IWM. Treat them as **one correlated bet**.
+- **Entry:**
+  - 30–45 days to expiry.
+  - Short put at about 16–20 delta. Long put $2–$5 below it.
+  - Credit ≥ 1/4 to 1/3 of the spread width.
+  - Enter 10:00–11:30 ET, when spreads are tightest.
+  - Only when IV rank > 25.
+- **Order:** a single multi-leg limit order at mid, walked $0.01 at a time toward the natural price. **Never leg in.**
+- **Exits:**
+  - Take profit at **50% of credit**.
+  - Stop at **2× credit** (spread value = 3× credit).
+  - Close at **21 days to expiry** whatever the P&L.
+  - Close immediately if the short strike is in the money with little extrinsic value left (early-assignment risk; one assigned SPY put = about $65k of stock).
+- **Sizing at $2,000:**
+  - Max loss per spread ≤ $200 (10%).
+  - At most 3 open at once.
+  - Total defined risk ≤ 30% of equity.
+  - Re-size from equity every week.
+- **Honest math:** a $2-wide spread for $0.40 credit wins +$20 at 50% and loses −$80 at the stop. That needs an **~80% win rate** just to break even. A 16-delta short put expires out of the money about 84% of the time, so the edge is real but **thin**. That is why the Phase 2 and Phase 3 gates exist.
+
+### Satellite (about 10–20% of the risk budget, only if gates pass)
+The long-option signals (A–C) and Strategy E, each with its own budget and kill rule.
+
+### Execution and operations
+- The engine checks positions every minute while the market is open. This strategy isn't latency-sensitive.
+- Profit-take orders are re-placed every morning. Many brokers make options orders day-only; verify per broker.
+- Stops are enforced by the engine. The watchdog and the external dead-man switch force a close if the engine is down.
+- A weekly report covers expectancy, win rate versus break-even win rate, drawdown and costs as % of equity.
+
+### Expectations
+A *good* result is beating SPY's return with drawdowns under about 25%. Any setup that promises 5–10% a month is taking tail risk that hasn't shown up yet.
