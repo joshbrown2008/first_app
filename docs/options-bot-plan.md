@@ -325,3 +325,51 @@ The trade-off is the opposite payoff shape. Sellers win often and in small amoun
 | $2,000+ (margin, Level 3) | **Defined-risk put credit spreads / iron condors** on SPY/QQQ/IWM, e.g. $1–$2-wide spreads risking $100–$200 each. This is the standard small-account setup for a seller |
 
 **Recommendation:** run **both** in Phase 2 backtests and Phase 3 paper trading: (1) the buying signals, with gross-vs-net logging, and (2) a mechanical selling strategy. Use the selling strategy only once capital reaches $2,000 so it can use defined-risk spreads, or use cash-secured puts at $1,000 if the census finds suitable liquid stocks under $10. Let the gates decide which one goes live.
+
+---
+
+## 12. Continuous trading, micro-scalping, and adding to losers
+
+### The proposed idea
+"Take about $1 profits at high volume, hold losers until they come back, and buy more when a trade goes against us."
+
+### Why it fails as stated
+1. **A $1 target is the same size as the trading costs.** One options tick is $0.01 × 100 = **$1 per contract**. Even SPY options have at least a 1-tick spread, so buying at the ask and selling at the bid costs about $1 before any fees. Fees add $0.10 at Alpaca and $0.70 at Tradier Standard. Netting $1 needs the price to move about 2 ticks your way on every trade, and the other side of each trade is a market maker whose business is exactly this.
+2. **"Volume" isn't possible in a cash account.** Settled-cash rules (§0, item 6) let $1,000 turn over about once per day. Frequent trading in and out needs a margin account, which needs at least $2,000, and must follow the broker's intraday margin rules.
+3. **"Wait until it comes back" means no stop loss on an asset that loses value every day.** A losing option often never recovers before it expires worthless. The math:
+   - Suppose 95% of trades win +$1.
+   - Suppose 5% lose an average of −$40.
+   - Expectancy = 0.95 × $1 − 0.05 × $40 = **−$1.05 per trade**.
+   - Breaking even needs a **97.6% win rate**. One bad trend day wipes out weeks of $1 wins.
+4. **Buying more is not a hedge. It is averaging down, a form of martingale.** It *increases* exposure in the direction that is losing. In a cash account it runs out of money just as the losing streak gets longest, which ends in ruin.
+   - A real hedge takes the *opposite* position, for example buying a put against a long call. That locks in the loss rather than recovering it, and it costs another spread.
+
+### Where "many small wins" legitimately comes from
+**Defined-risk option selling** (put credit spreads / iron condors, §11). It has a high win rate and small gains, and the *maximum loss is fixed when the trade is opened*. That fixed maximum replaces "hope it comes back". It needs $2,000 and a margin account (Level 3).
+
+### Building for continuous trading (any strategy)
+- **Streaming, event-driven engine:**
+  - Use WebSocket quote and trade-update streams, not polling.
+  - Strategies react to events (quote, bar close, fill).
+  - Use one asyncio task per subsystem, connected by queues.
+- **Each position is a state machine:**
+  `SIGNAL → PENDING_ENTRY → OPEN → EXITING → CLOSED`, plus `CANCEL_PENDING` / `ERROR`.
+  - Each transition is persisted to SQLite *before* the broker is called.
+  - Allowed transitions are listed explicitly, so an illegal one raises an error.
+- **Every position opens with its exit plan already set:** profit target, stop loss, time stop and expiry flatten. Changes after entry can only *tighten* it.
+- **Adding to a position (if ever):** only as a *pre-planned* second entry that is counted against the trade's risk budget at entry time.
+  - At most 1 add.
+  - The combined stop is unchanged.
+  - **Never an add triggered by a loss.**
+  - The risk engine rejects any order that would increase total risk on a losing position.
+- **Rate controls:** max orders per minute, max round trips per day (settlement-aware), and a cooldown after each loss.
+- **Recovery:** after any restart, reconcile with the broker, rebuild the state machines from the DB and the broker's records, and resume. Positions the engine doesn't recognize trigger an alert and are only allowed to exit.
+
+### How to test the user's idea anyway
+Add it as **Strategy E: micro-scalp** in the backtest and in paper trading only, with:
+- a +$1 net target,
+- a hard stop,
+- at most 1 pre-planned add,
+- the full spread and fees modeled.
+
+If it passes the Phase 2 and Phase 3 gates on real quotes, it can go live like any other strategy. The data decides. Strategy E without a stop and with unlimited adds will **not** be built into the live engine.
