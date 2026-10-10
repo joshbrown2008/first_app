@@ -668,3 +668,89 @@ At $2,000 this is about 1–2% of capital per month. The track must earn that be
 - **SEC EDGAR:** free 8-K / filings feed.
 - **Earnings calendar:** a free or low-cost provider.
 - **Options IV / implied move:** from the paid OPRA feed already planned.
+
+---
+
+## 18. Research swarm (100 researchers → evaluators → final evaluator) and how it drives scalping
+
+### Two reality checks that shape the design
+1. **Latency.** A researcher → evaluator → final chain takes about **10–45 s**. Each hop is a model call (Haiku 1–3 s, Sonnet 3–10 s, Opus with thinking 5–30 s). A scalping setup lasts seconds. **The hierarchy cannot approve individual scalps.**
+2. **Cost is cheap per call, not per month at $2,000.** Suppose 100 researchers "think" every minute with about 20k tokens of context on Haiku 5.5 ($0.10 per million input tokens):
+   - 100 × 390 min × 20k ≈ 780M tokens/day ≈ **$78/day ≈ $1,600/month**, which is 80% of capital every month.
+   - So the swarm must be **event-driven** (wake on news or price events), not a constant polling loop.
+
+### Design: "slow brain, fast hands"
+The LLM swarm **pre-decides conditions**. Deterministic code **executes in milliseconds**.
+
+```
+ EVENT BUS (deterministic, cheap): news headlines · 8-K filings · volume spikes ·
+   level breaks · IV jumps · halts · sector moves
+        │ routed by ticker
+        ▼
+ L1 RESEARCHERS (100 logical agents × ~5 tickers each = ~500-name universe)
+   claude-haiku-5-5, woken only by events for their tickers; per-ticker notes in DB
+   → SignalCard {ticker, thesis, direction, horizon, confidence 0–1,
+                 key levels, invalidation price, evidence ids}
+        ▼
+ L2 SECTOR EVALUATORS (~8, one per sector), claude-sonnet-5-5, batch every 2–5 min
+   dedupe, resolve conflicting cards, add sector context, rank, promote top N
+        ▼
+ L3 FINAL EVALUATOR, claude-opus-5-5
+   portfolio view: correlation, risk budget, regime (S4), open positions
+   → ARMS a PlaybookEntry (or rejects)
+        ▼
+ PLAYBOOK (DB table, each entry has a TTL of 15–120 min):
+   {ticker, allowed side (long/short/none), setups allowed (SC1–SC4),
+    levels, invalidation, max contracts, expires_at}
+        ▼
+ FAST SCALPING ENGINE (deterministic, sub-second): trades SC1–SC4 triggers
+   ONLY on armed tickers, in the armed direction, until TTL or invalidation
+        ▼
+ RISK ENGINE (unchanged final gate) → order manager → broker
+```
+
+- The LLMs **arm and disarm**; they never send orders.
+- L3 can only arm within the risk engine's caps. Expiry, an invalidation-price hit, or an L3 "disarm" removes an entry instantly.
+- **Playbook example:** `NVDA · long only · SC2 (VWAP pullback) & SC3 (break) · above 182.40 · invalidate < 179.80 · 1 contract · expires 11:45 ET` (after a positive guidance headline that L1 judged under-priced).
+
+### Making the hierarchy add information, not noise
+- **100 copies of one model are not 100 independent opinions.** Their errors are correlated, so a majority vote overstates confidence. Get diversity from **different inputs and roles**:
+  - news reader,
+  - technicals/levels reader,
+  - options-flow/IV reader,
+  - a dedicated skeptic.
+- **Keep it to 2–3 layers.** Each layer loses detail (the "telephone game"). Pass the structured cards and evidence ids up the chain, not summaries of summaries.
+- **Researcher leaderboard:** score every SignalCard after its horizon ends. Use a calibration (Brier) score and the hit rate of the predicted direction against the move. L2 weights cards by each researcher's track record. Every month, retire or re-prompt the bottom 10%.
+- **Prove each layer pays for itself:** shadow-trade what each layer rejected (as in §17). Drop any layer that doesn't improve expectancy by more than its token cost.
+
+### Implementation
+- Researchers are **stateless workers** pulled from a queue (an asyncio pool with a concurrency limit and API rate-limit backoff). "100 bots" means 100 prompt/ticker configurations, not 100 running processes.
+- Use the plain Anthropic SDK (Messages API + strict structured outputs) for L1–L3: fast, cheap and auditable.
+- Use `claude-agent-sdk` for slower, deeper research jobs, such as reading a 10-K or building the pre-market dossier on a ticker.
+- **Prompt caching:** each researcher's stable prefix (role, rules, ticker notes) is cached. Only the new event is fresh input.
+- **Batch API (50% off)** for non-urgent work: overnight dossiers and the leaderboard post-mortems.
+
+### Cost (event-driven, estimated; replace with measured usage)
+| Layer | Volume per day | Model | Est. $/day |
+|---|---|---|---|
+| L1 researchers | about 3,000 wakes (≈900 news + ≈2,000 price events) × 8k input / 0.5k output | Haiku 5.5 | about $3 |
+| L2 evaluators | 8 sectors × about 80 batches × 10k input / 1k output | Sonnet 5.5 | about $8–20 |
+| L3 final | about 30–60 decisions × 15k input / 2k output | Opus 5.5 | about $4–7 |
+| **Total** | | | **≈ $15–30/day ≈ $300–600/month** |
+
+**At $2,000 capital, that's 15–30% of the account per month.**
+
+**Lean configuration (start here):** L1 on Haiku, L2 also on Haiku, L3 on Sonnet 5.5, and arm-only decisions. That's ≈ **$3–6/day ≈ $60–120/month** (3–6% per month). Upgrade a layer's model only when the shadow-book measurement shows its lift exceeds its cost. The full swarm makes economic sense at roughly **$20k+ capital**.
+
+### Scalping universe for single stocks
+- ATM option spread ≤ $0.03 at the nearest weekly expiry, and option volume > 20k contracts/day. This is typically mega-caps and the highest-volume momentum names; the list is refreshed daily.
+- 1 contract (about $100–500 of premium at the ATM nearest weekly) is sized against §16's 1–2% risk-per-trade rule.
+- The armed-playbook TTL keeps scalps tied to *fresh* reasoning. Nothing trades on a thesis older than its expiry.
+
+### Build order
+1. Event bus + playbook table + fast engine running SC1–SC4 on hand-armed tickers (paper).
+2. L3 only (one evaluator arming from raw events).
+3. Add L1 researchers.
+4. Add L2.
+
+Each step must beat the previous one in the shadow-book comparison before the next is built.
