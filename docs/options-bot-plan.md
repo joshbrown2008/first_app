@@ -917,9 +917,19 @@ Every call records backend, model, tokens, latency and cost in `agent_runs`, so 
 |---|---|---|---|
 | **A. Build + plumbing** | weeks 1–4 | Engine, risk engine, Alpaca **paper** account on the **free** data plan (fine for testing code, *not* for judging strategies). Local LLM. Backtests on Alpaca historical bars | **≈ $0–20/month** (a little Claude API for L3 tests) |
 | **B. Validation paper** | 6–12 weeks | Same engine on **real-time OPRA ($99)**. All strategies run in paper with shadow books. The probability engine collects labels. Optional historical options-quote data for quote-level backtests (est. $30–80, unverified) | **≈ $120–200/month** |
-| **C. Small real trades ("confidence")** | 2–3 months | Fund **$2,000–3,000** in a margin account (the $2,000 floor is needed for day trading). **1 contract, at most $20–40 risk per trade, at most 3 trades/day.** Only setups that passed the B gates. Live is compared against paper side by side | Data + LLM ≈ $120–160/month. **Capital at risk: treat losses here as tuition** |
+| **C. Small real trades ("confidence")** | 2–3 months | Fund **$500–1,000** at Alpaca. Its accounts are margin accounts, and since June 2026 non-leverage accounts can day trade with no PDT designation (see §22). **1 contract, at most $20–40 risk per trade, at most 3 trades/day.** Only setups that passed the B gates. Live is compared against paper side by side | Data + LLM ≈ $120–160/month. **Capital at risk: treat losses here as tuition** |
 | **D. Scale** | after C passes | Add capital toward $5k–10k (§20). Ramp size 25% → 100% per §20 | Per §20 |
 
 **Gate C → D:** ≥ 100 live trades. Live expectancy ≥ 70% of paper expectancy. Median slippage within the model. No risk-rule violations. Max drawdown within the tested range.
 
 **With local LLMs, the lean monthly hurdle drops to about $130–180.** On $10k that's about 1.5% per month (§20 recalculated).
+
+---
+
+## 22. Correction: $2,000 is not an options minimum
+
+- **There is no regulatory minimum to trade options.** Long calls and puts (Level 2) can be traded with any balance that covers the premium.
+- **$2,000 is the margin threshold for borrowing / leverage.** At Alpaca, $2,000 is now the minimum equity for **4× intraday buying power** on leverage-enabled accounts. That replaced $25,000 when PDT was retired on 2026-06-04. **This plan doesn't use leverage**, so it doesn't need it.
+- **Alpaca implemented the PDT replacement on 2026-06-04.** For non-leverage margin accounts the PDT designation is abolished, and orders that would create a margin deficit are rejected. So a **$500–1,000 Alpaca account can day trade and scalp long options** with buying power equal to equity. This supersedes the earlier "a cash account can't scalp" and "$2,000 needed to day trade" statements (§0, §16, §21) **for Alpaca specifically**. Other brokers have until 2027-10-20 to implement, so check each one.
+- **Where $2,000 may still matter:** Level 3 (spreads) approval criteria aren't published and may consider equity. Apply and see. The §20 cost-hurdle math, not regulation, is what argues for $5k–10k before scaling.
+- **Note for the order manager:** Alpaca removed the `pattern_day_trader`, `daytrade_count` and `daytrading_buying_power` API fields. Use `buying_power`.
