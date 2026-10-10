@@ -754,3 +754,68 @@ The LLM swarm **pre-decides conditions**. Deterministic code **executes in milli
 4. Add L2.
 
 Each step must beat the previous one in the shadow-book comparison before the next is built.
+
+---
+
+## 19. Probability engine (meta-labeling): score every idea with P(win) and expected value
+
+### Concept
+The "primary" sources propose a trade and its side: researcher cards, playbook triggers, and SC/S strategies. A separate **statistical model** then estimates whether *this particular* proposal will win and how much is at stake. This is **meta-labeling** (López de Prado). The primary decides direction; the meta-model decides **take/skip and size**.
+
+A trained model scores in **microseconds**, unlike an LLM (§18). So it can gate **every individual scalp in real time**, which is the piece the LLM hierarchy couldn't do.
+
+### What it outputs per proposal
+```
+p_win            calibrated probability the trade hits target before stop/time
+p_win_lower      lower bound (e.g. 10th percentile) given sample uncertainty
+avg_win, avg_loss  expected $ given win / loss (from the same setup's history)
+EV = p·avg_win − (1−p)·avg_loss − costs        (also EV_lower using p_win_lower)
+```
+**Decision rule (deterministic):**
+- Take the trade only if **EV_lower > 0**.
+- Size = **¼ Kelly**, capped by the risk engine.
+- For a win/loss ratio b = avg_win/avg_loss: Kelly f\* = p − (1−p)/b.
+  - Example: SC1 with p = 0.45, b = 2 gives f\* = 0.175, so ¼ Kelly is 4.4% of equity at risk.
+  - The §16 cap of 1–2% binds first. **Caps always win.**
+
+### Labels: define "win" exactly as live trading does
+**Triple-barrier labeling** (target / stop / time limit) uses the same bracket parameters as live exits. Every proposal gets an outcome, including ones we **didn't** take, because shadow trades (§17/§18) are labeled too. Without that, the model only learns from trades that were already filtered (selection bias).
+
+### Models (start simple, add complexity only if it beats the simpler one out-of-sample)
+| Stage | Model | Why |
+|---|---|---|
+| Cold start | **Bayesian Beta-binomial win rates** per (setup × ticker group × regime), shrunk toward the setup's backtest prior | Honest with tiny samples, and gives credible intervals for free |
+| Once there are ≥ 500 labeled outcomes | **Logistic regression → gradient boosting (LightGBM)** on features, then **isotonic calibration** | Captures interactions such as time of day × IV rank × relative volume |
+| Always | Walk-forward retraining (weekly) with time-decayed weights (e.g. 60-day half-life) | Markets change. Old edges fade |
+
+**Features** must be known at decision time, with no leakage. They include:
+- setup id; ticker liquidity/spread
+- relative volume; distance to VWAP and levels
+- IV rank and implied move; time of day; regime (S4)
+- SPY/sector move
+- news triage scores and researcher confidence
+- **the researcher's leaderboard score**, and L2/L3 verdicts (as features, not overrides)
+
+### Sample size: why the lower bound matters
+| Trades observed | Win rate seen | 95% interval |
+|---|---|---|
+| 30 | 60% | about 42–77% |
+| 300 | 60% | about 54–66% |
+
+Early on the lower bound sits near break-even, so the engine trades **small or not at all** until evidence builds. That is the intended behavior.
+
+### Monitoring and self-protection
+- **Calibration check:** live Brier score and a reliability plot. When the model says 60%, do those trades win about 60%?
+- If live calibration drifts beyond tolerance over the last N trades, **automatically halve size**. If it persists, disable that setup until retrained.
+- Track EV-predicted vs realized P&L per setup weekly. A setup whose realized EV is below predicted for 4 straight weeks is paused.
+
+### Where it plugs in (also cuts LLM cost)
+```
+L1 SignalCard ──► probability engine ──(EV_lower > 0 only)──► L2 ──► L3 arms playbook
+Fast engine trigger on armed ticker ──► probability engine ──► size ──► risk engine ──► order
+```
+- Scoring L1 cards **before** L2/L3 filters out low-EV ideas, so the expensive Sonnet/Opus layers only see promising ones.
+- L2 and L3 receive `p_win`, `EV` and the interval, and rank by EV.
+
+### Libraries
+`scikit-learn` (logistic, isotonic calibration), `lightgbm`, `scipy.stats` (Beta posteriors), `mapie` or bootstrap (intervals), `mlflow` or a simple `models/` registry (versioned models; every trade records which model version scored it).
