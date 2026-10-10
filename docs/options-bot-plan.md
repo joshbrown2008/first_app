@@ -1073,3 +1073,50 @@ This is compact (a few hundred tokens), so it's cheap for local or Claude bots t
 - The TA engine and snapshots are free (local CPU).
 - Technician researchers run on the local LLM ($0).
 - Vision reviews, if enabled, cost about 1–2k tokens per image on Sonnet 5.5 (≈ $0.003–0.005 each), limited to candidate tickers.
+
+---
+
+## 26. Training data at scale: market replay + shadow labeling (not mass broker paper orders)
+
+### Key idea
+The prediction model needs **labeled examples**: features at decision time → outcome (target / stop / time). It does **not** need broker orders to get them.
+- **Labels come from replaying history and from shadow-labeling every live candidate.**
+- **Broker paper trades are only for calibrating the fill model** (how real fills differ from simulated ones).
+
+Mass broker paper orders would be slow (Alpaca's trading API is rate-limited to about 200 requests/min). Paper fills are also *optimistic*, so training on them would bake in a bias.
+
+Paper accounts *can* be reset and refilled (Alpaca lets you reset a paper account and set its balance). The risk engine should still run at the **realistic account size**, so paper behavior matches what live will do.
+
+### Scale
+| Source | Estimate |
+|---|---|
+| Historical replay: about 100 liquid tickers × about 20 candidate triggers/ticker/day (all setups, multi-timeframe) × about 2,500 trading days (10 years) | **≈ 5 million labeled events** |
+| Forward shadow labeling: about 500-name universe, every candidate logged and labeled live | **≈ 5–20k new labels per trading day** |
+| Broker paper subset (fill calibration) | About 20–50 orders/day, enough to fit slippage/fill-rate models |
+
+**Caveat:** events on the same day or ticker, with overlapping holding windows, are highly correlated. The **effective sample size is much smaller** than the raw count. This is handled with sample-uniqueness weights and purged cross-validation (below).
+
+### Pipeline (`research/` in the new repo)
+1. **Data lake (Parquet, local NVMe):**
+   - Stock/ETF 1-min SIP bars from Alpaca, about 2016 onward (free; historical not affected by the 15-min delay).
+   - MES/MNQ history from a futures data vendor (e.g. Databento, pay-as-you-go; **verify pricing**).
+   - Options NBBO quotes (ThetaData/Polygon-class) only when the options tracks start.
+2. **Event generator.** The **same TA engine and strategy code as live** (§25) runs over history bar by bar and emits candidate events with **point-in-time features only**. One codebase for live and replay prevents train/live mismatch and look-ahead.
+3. **Labeler.** Triple-barrier outcomes, using a **conservative fill model**: entry at the next bar open or the far side of the spread plus slippage, with fees. The labels are P&L in $ and R-multiples, plus win/loss.
+4. **Dataset builder.**
+   - Sample-uniqueness weights for overlapping labels.
+   - **Purged and embargoed walk-forward splits**, with no training samples overlapping test windows.
+   - A final **untouched holdout** (e.g. the most recent 12 months) that is used once.
+5. **Models (on the 4090):**
+   - **Baseline:** gradient boosting (LightGBM) on tabular features.
+   - **Neural network:** a temporal encoder (1D-CNN or small transformer) over the last N bars on several timeframes, plus tabular features (TA snapshot, regime, time of day, liquidity). Heads for P(win) and expected R. Calibrated with temperature scaling or isotonic.
+   - **Promotion rule:** the NN replaces the baseline only if it beats it on **purged out-of-sample log-loss and Brier score, and on post-cost EV**, over multiple walk-forward folds. Results are adjusted for the number of variants tried (deflated Sharpe / multiple-testing correction).
+6. **Forward loop.** The live engine runs in **shadow mode**: every candidate is scored, logged and labeled after its horizon. Models retrain weekly on history plus fresh shadow labels. Model versions are tagged on every decision.
+
+### What can't be backfilled
+- **LLM-derived features** (news triage, researcher cards, vision verdicts) are contaminated by the models' training data. They come **from forward shadow labels only**, so their contribution grows over months.
+- The NN starts on price/volume/TA features. LLM features are added as forward data accumulates.
+
+### Hardware fit
+- Millions of rows × a few hundred features train in minutes to an hour on the 4090.
+- 128 GB RAM holds the feature tables. NVMe stores the bars and labels (about 100–500 GB).
